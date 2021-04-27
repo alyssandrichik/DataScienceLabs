@@ -1,0 +1,457 @@
+---
+title: "Lab 7"
+author: "Alyssa Andrichik"
+date: "Math 241, Week 10"
+output:
+  html_document
+urlcolor: blue
+---
+
+```{r setup, include=FALSE}
+# Do not modify this chunk.
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+
+
+```
+
+```{r}
+# Put all necessary libraries here
+library(tidyverse)
+library(ggmap)
+library(plotly)
+library(rnoaa)
+library(gganimate)
+library(leaflet)
+library(tidycensus)
+library(viridis)
+```
+
+
+
+## Due: Thursday, April 8th at 8:30am
+
+## Goals of this lab
+
+**Note: You should upload the final version to your Math 241 GitHub repo that I created for you, not Gradescope.**  We will grade this lab directly from your repo.
+
+
+## Goals of this lab
+
+* Practice creating static and interactive choropleth maps.
+* Practice creating static maps with `ggmap` and interactive maps with `leaflet`.
+* Practice incorporating interactivity into a graph with `gganimate`.
+
+
+### Problem 1: Mapping PDX Crashes
+
+For this problem we will return to the SE Portland 2018 car crash dataset.
+```{r, eval = FALSE}
+api_key <- "6da0a65cb454a24c4e1679f4cc03cdbea9d2f2aa"
+census_api_key(api_key)
+```
+
+```{r}
+pdx_crash_2018 <- read_csv("/home/courses/math241s21/Data/pdx_crash_2018_page1.csv")
+```
+
+a. Grab the code from Lab 2, Problem 4.a to create a scatterplot of longitude and latitude (`LONGTD_DD`, `LAT_DD`).  Paste that code here to recreate that graph.  
+```{r}
+ggplot(pdx_crash_2018,  mapping = aes(y = LAT_DD, x = LONGTD_DD))+
+  geom_point()
+```
+
+b. Now create a (static) raster map with the crashes mapped as points on top.
+```{r}
+options(tigris_use_cache = TRUE)
+or <- get_acs(state = "OR",  geography = "county", 
+                  variables = "B19013_001", geometry = TRUE, 
+              key = api_key)
+or %>%
+  filter(NAME == "Multnomah County, Oregon") %>%
+  select(geometry)
+```
+```{r}
+mult_map <- c(bottom = 45.45, left = -122.691, 
+                  top = 45.53, right = -122.48)
+mult_map <- get_stamenmap(mult_map, 
+                          maptype = "terrain-background", 
+                          zoom = 10)
+```
+```{r}
+save(mult_map, file = "mult_map.RData")
+load("mult_map.RData")
+```
+```{r}
+mult_map %>%
+  ggmap() +
+  geom_point(data = pdx_crash_2018, aes(x = LONGTD_DD, y = LAT_DD),
+             inherit.aes = FALSE, color = "red") +
+  theme_void()
+```
+
+c.  Now create an interactive map of the crashes (but still only map the location of the crashes at this point).  
+```{r}
+leaflet() %>%
+  addTiles() %>%
+  addCircleMarkers(lng = ~LONGTD_DD, lat = ~LAT_DD, 
+                   data = pdx_crash_2018, radius = 2, 
+                   stroke = FALSE, fillOpacity = 0.9)
+```
+
+d. Create a factor variable, `day_time` with categories:
+
+* morning: crashes between 5am and noon
+* afternoon: crashes after noon but before or at 4pm
+* evening: crashes after 4pm but before or at 8pm
+* night: crashes after 8pm but before or at 5am
+
+Add this variable to your interactive map using color.  Make sure to include a legend and be mindful of your color palette choice.  How do crash locations vary by parts of the day?
+```{r}
+pdx_crash_2018$CRASH_HR_NO <- as.numeric(pdx_crash_2018$CRASH_HR_NO)
+
+pdx_crash_2018 <- mutate(pdx_crash_2018,
+                         day_time = case_when(
+                           CRASH_HR_NO < 5 ~ "night",
+                           CRASH_HR_NO >= 5 & CRASH_HR_NO < 12 ~ "morning",
+                           CRASH_HR_NO >= 12 & CRASH_HR_NO < 16 ~ "afternoon",
+                           CRASH_HR_NO >= 16 & CRASH_HR_NO < 20 ~ "evening",
+                           CRASH_HR_NO >= 20 & CRASH_HR_NO <= 23 ~ "night",
+                           # This is for all other values 
+             ))
+
+pal <- colorFactor(
+  palette = topo.colors(4),
+  domain = pdx_crash_2018$day_time)
+
+leaflet() %>%
+  addTiles() %>%
+  addCircleMarkers(lng = ~LONGTD_DD, 
+                   lat = ~LAT_DD, 
+                   data = pdx_crash_2018, 
+                   radius = 3, 
+                   stroke = FALSE, 
+                   fillOpacity = 0.9,
+                   color = ~pal(day_time)) %>%
+  addLegend(pal = pal, values = pdx_crash_2018$day_time,
+            title = "Time of Crash",
+            opacity = 1) 
+```
+
+Most of the crashes take place on the large streets/highways, but accidents that occur at night tend to not be on highways and larger roads.
+
+e. Now add a pop-up to you interactive map that provides additional information (beyond part of the day) about the crash.  
+```{r}
+leaflet() %>%
+  addTiles() %>%
+  addCircleMarkers(lng = ~LONGTD_DD, 
+                   lat = ~LAT_DD, 
+                   data = pdx_crash_2018, 
+                   radius = 3, 
+                   stroke = FALSE, 
+                   fillOpacity = 0.9,
+                   color = ~pal(day_time),
+                   popup = paste("Road Type:", pdx_crash_2018$RD_CHAR_SHORT_DESC, "<br>",
+                           "Weather Condition:", pdx_crash_2018$WTHR_COND_SHORT_DESC, "<br>")) %>%
+  addLegend(pal = pal, values = pdx_crash_2018$day_time,
+            title = "Time of Crash",
+            opacity = 1)
+```
+
+
+f.  Create a leaflet graph where the user can toggle between displaying the different crash severities.  Draw some conclusions about differences in location for the severity types. 
+```{r}
+pal2 <- colorFactor(
+  palette = topo.colors(2),
+  domain = pdx_crash_2018$CRASH_SVRTY_SHORT_DESC)
+
+fatal <- pdx_crash_2018 %>%
+  filter(CRASH_SVRTY_SHORT_DESC == "FAT")
+PDO <- pdx_crash_2018 %>%
+  filter(CRASH_SVRTY_SHORT_DESC == "PDO")
+injury <- pdx_crash_2018 %>%
+  filter(CRASH_SVRTY_SHORT_DESC == "INJ")
+leaflet(pdx_crash_2018) %>%
+  addTiles() %>%
+  addCircleMarkers(lng = ~LONGTD_DD, 
+                   lat = ~LAT_DD, 
+                   data = fatal, 
+                   radius = 3, 
+                   stroke = FALSE, 
+                   fillOpacity = 0.9,
+                   group = "Fatal Crash",
+                   color = ~pal2(CRASH_SVRTY_SHORT_DESC)
+                   ) %>%
+  addCircleMarkers(lng = ~LONGTD_DD, 
+                   lat = ~LAT_DD, 
+                   data = PDO, 
+                   radius = 3, 
+                   stroke = FALSE, 
+                   fillOpacity = 0.9,
+                   group = "Property Damage Only Crash",
+                   color = ~pal2(CRASH_SVRTY_SHORT_DESC)
+                   ) %>%
+  addCircleMarkers(lng = ~LONGTD_DD, 
+                   lat = ~LAT_DD, 
+                   data = injury, 
+                   radius = 3, 
+                   stroke = FALSE, 
+                   fillOpacity = 0.9,
+                   group = "Non-fatal Injury Crash",
+                   color = ~pal2(CRASH_SVRTY_SHORT_DESC)
+                   ) %>%
+  addLayersControl(
+    overlayGroups = c("Fatal Crash", "Property Damage Only Crash", "Non-fatal Injury Crash"),
+    options = layersControlOptions(collapsed = FALSE)
+  )
+```
+
+Fatal crashes, though there are few, happen mostly on highways and other large roads. Non-fatal injuries happen everywhere.
+
+g.  Let's go back to the static map and this time change our `geom`.  Use `geom_density2d()` instead of `geom_point()`.  Interpret what this map tells us about car crashes in the SE and compare the story to the map using `geom_point()`.
+```{r}
+mult_map %>%
+  ggmap() +
+  geom_density_2d(data = pdx_crash_2018, aes(x = LONGTD_DD, y = LAT_DD),
+             inherit.aes = FALSE, color = "red") +
+  theme_void()
+```
+
+Looking at both maps, the crashes in the SE are on roads exiting the Portland metropolitan area. 
+
+h.  Facet the plot in g. by `day_time`.  Does the distribution on accidents seem to vary much by part of day?
+```{r}
+mult_map %>%
+  ggmap() +
+  geom_density_2d(data = pdx_crash_2018, aes(x = LONGTD_DD, y = LAT_DD),
+             inherit.aes = FALSE, color = "red") +
+  theme_void()+
+  facet_wrap(~day_time)
+```
+
+The areas where crashes occur is relatively the same throughout the day, and seems to be relatively distributed by part of day and thus does not vary much.
+
+### Problem 2: Choropleth Maps
+
+For this problem, I want you to practice creating choropleth maps.  Let's grab some data using `tidycensus`.  Remember that you will have to set up an [API key](https://api.census.gov/data/key_signup.html).
+
+a. Let's grab data on the median gross rent (`B25064_001`) from the American Community Survey for Multnomah county, Oregon.  I want you to do data pulls at three geography resolutions: `county subdivision`, `tract`, and `block group`.
+```{r}
+tract = get_acs(geography = "tract",
+                variables = c(medrentgrs= "B25064_001"),
+                state = "OR",
+                county = "Multnomah county",
+                geometry = TRUE)
+subdivision = get_acs(geography = "county subdivision",
+                variables = c(medrentgrs= "B25064_001"),
+                state = "OR",
+                county = "Multnomah county",
+                geometry = TRUE)
+block = get_acs(geography = "block group",
+                variables = c(medrentgrs= "B25064_001"),
+                state = "OR",
+                county = "Multnomah county",
+                geometry = TRUE)
+head(tract)
+```
+
+b. Create three choropleth maps of gross rent, one for each geography resolution.  What information can we glean from these maps?  Also, which resolution seems most useful for this variable?  Justify your answer.
+```{r}
+ggplot(tract, aes(fill = estimate, color = estimate)) +
+  geom_sf() +
+  coord_sf(crs = 26914) +
+  scale_fill_viridis(option = "inferno") +
+  scale_color_viridis(option = "inferno")
+```
+```{r}
+ggplot(subdivision, aes(fill = estimate, color = estimate)) +
+  geom_sf() +
+  coord_sf(crs = 26914) +
+  scale_fill_viridis(option = "inferno") +
+  scale_color_viridis(option = "inferno")
+```
+```{r}
+ggplot(block, aes(fill = estimate, color = estimate)) +
+  geom_sf() +
+  coord_sf(crs = 26914) +
+  scale_fill_viridis(option = "inferno") +
+  scale_color_viridis(option = "inferno")
+```
+
+Theses maps show the estimated population by tract, subdivision, and block. I think that the tract map is the most helpful since it has very few areas that are NA plus shows a bit of distinction of population to a smaller geographic region that shows variance. 
+
+c. Make one of your maps interactive.  
+```{r}
+interactive <- ggplotly(ggplot(tract, aes(fill = estimate, color = estimate)) +
+  geom_sf() +
+  coord_sf(crs = 26914) +
+  scale_fill_viridis(option = "magma") +
+  scale_color_viridis(option = "magma")
+)
+interactive
+```
+
+
+### Problem 3: Take a Static Plot and Animate It!
+
+Let's take a static plot we made earlier in the semester and add some animation. 
+
+```{r}
+fbi_data <- read_csv("fbi_offenders.csv")
+fbi_data %>%
+  filter(!key == "Unknown", year >= 2000) %>% 
+  ggplot(aes(x = year, y = count, colour = key)) +
+  geom_point() +
+  geom_line() +
+  facet_wrap(~type)
+```
+b. Now add animation.
+```{r}
+fbi_data %>%
+  filter(!key == "Unknown", year >= 2000) %>% 
+  ggplot(aes(x = year, y = count, colour = key)) +
+  geom_point() +
+  geom_line() +
+  facet_wrap(~type)+
+  transition_reveal(year)
+anim_save("animated_graph.gif")
+```
+
+c. In what ways did the animation improve the plot?  In what ways did the animation worsen the plot?
+
+The animation made the graph more interesting to look at and highlighted the stark differences between gender and count of crimes by year. On the flip side, the change in line graph for arson was so minimal that the animation of transition time did not add anything to that plot specifically. 
+
+
+### Problem 4: Your Turn!
+
+a. Using the `pdxTrees` dataset, create two `leaflet` maps.  I want you to get creative and really dig into the functionalities of `leaflet`.  Consider
+
+* Focusing on a specific park or set of parks.
+* Potentially using special icons.
+* Including labels and/or pop-ups.
+* The best tiling for your purpose.
+* Zoom or view constraints
+
+State the key takeaways that we can learn from your maps.
+```{r}
+library(pdxTrees)
+park <- get_pdxTrees_parks()%>%
+  filter(Park == c("Brentwood Park"))
+
+fair <- park %>%
+  filter(Condition == "Fair")
+poor <- park %>%
+  filter(Condition == "Poor")
+good <- park %>%
+  filter(Condition == "Good")
+
+pal3 <- colorFactor(
+  palette = topo.colors(5),
+  domain = park$Family)
+
+leaflet(park, options = leafletOptions(minZoom = 10, maxZoom = 18)) %>%
+  addTiles() %>%
+  addCircles(lng = ~Longitude,
+             lat = ~Latitude,
+             data = good,
+             radius = 3,
+             stroke = FALSE,
+             fillOpacity = 0.9,
+             group = "Good Condition",
+             color = ~pal3(Family)
+            )%>%
+  addCircles(lng = ~Longitude,
+             lat = ~Latitude,
+             data = fair,
+             radius = 3,
+             stroke = FALSE,
+             fillOpacity = 0.9,
+             group = "Fair Condition",
+             color = ~pal3(Family)
+            )%>%
+  addCircles(lng = ~Longitude,
+             lat = ~Latitude,
+             data = poor,
+             radius = 3,
+             stroke = FALSE,
+             fillOpacity = 0.9,
+             group = "Poor Condition",
+             color = ~pal3(Family)
+            )%>%
+  addLayersControl(
+    overlayGroups = c("Good Condition", "Fair Condition", "Poor Condition"),
+    options = layersControlOptions(collapsed = FALSE)
+  )%>%
+  addLegend(pal = pal3, values = ~Family,
+            title = "Family",
+            opacity = 1)
+```
+
+```{r}
+pal4 <- colorNumeric(
+  palette = "RdYlBu",
+  domain = park$Carbon_Sequestration_value)
+
+leaflet(park, options = leafletOptions(minZoom = 10, maxZoom = 18)) %>%
+  addTiles() %>%
+  addCircles(lng = ~Longitude,
+             lat = ~Latitude,
+             data = good,
+             radius = 3,
+             stroke = FALSE,
+             fillOpacity = 0.9,
+             group = "Good Condition",
+             color = ~pal4(Carbon_Sequestration_value)
+            )%>%
+  addCircles(lng = ~Longitude,
+             lat = ~Latitude,
+             data = fair,
+             radius = 3,
+             stroke = FALSE,
+             fillOpacity = 0.9,
+             group = "Fair Condition",
+             color = ~pal4(Carbon_Sequestration_value)
+            )%>%
+  addCircles(lng = ~Longitude,
+             lat = ~Latitude,
+             data = poor,
+             radius = 3,
+             stroke = FALSE,
+             fillOpacity = 0.9,
+             group = "Poor Condition",
+             color = ~pal4(Carbon_Sequestration_value)
+            )%>%
+  addLayersControl(
+    overlayGroups = c("Good Condition", "Fair Condition", "Poor Condition"),
+    options = layersControlOptions(collapsed = FALSE)
+  )%>%
+  addLegend(pal = pal4, values = ~Carbon_Sequestration_value,
+            title = "Carbon Sequestration Value",
+            opacity = 1)
+```
+
+These plots show the trees in Brentwood Park. There is a relationship between Carbon Sequestration Value and the condition of the tree, but not much of a relationship between the family of the tree and the condition of the tree.
+
+b. Now using the `pdxTrees` dataset, create an animated graph.  Again, think carefully about the various animation features.  In particular, consider
+
+* How you want to transition from frame to frame.
+* How the data should enter and exit the plot.
+* The speeds of various aspects of the animation.
+* Adding frame information to the title and/or subtitle.
+* Whether or not the view should change as the animation progresses.
+
+```{r}
+p <- ggplot(park, aes(x = Tree_Height, y = Carbon_Storage_value, 
+                       color = Condition)) +
+  geom_point(show.legend = FALSE, alpha =1, ) +
+  scale_color_viridis_d() +
+  scale_size(range = c(2, 12)) +
+  scale_x_log10() +
+  labs(x = "Tree Height", y = "Carbon Storage Value") + 
+  transition_time(Tree_Height) +
+  labs(title = "Carbon Storage Value : {frame_time}") 
+animate(p, fps=10)
+```
+
+State the key takeaways that we can learn from your animated graph.  Also address whether or not you think the animation helps or hinders the delivery of these key takeaways.
+
+The animation of this plot is not very useful. I could not figure out to make the points stay, and so by the end of the transition, it is hard to see the relationship tree height and carbon storage value and those with the condition of a tree. There is however a relationship between height and carbon storage. The higher the tree, the more carbon it stores.

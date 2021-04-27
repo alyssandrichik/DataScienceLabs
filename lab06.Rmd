@@ -1,0 +1,757 @@
+---
+title: "Lab 6"
+author: "Alyssa Andrichik"
+date: "Math 241, Week 9"
+output:
+  pdf_document
+urlcolor: blue
+---
+
+```{r setup, include=FALSE}
+# Do not modify this chunk.
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+
+
+```
+
+```{r}
+# Put all necessary libraries here
+library(tidyverse)
+library(lubridate)
+library(httr)
+library(glue)
+library(stringr)
+library(tidytext)
+```
+
+
+
+## Due: Thursday, April 1st at 8:30am
+
+## Goals of this lab
+
+1. Practice iteration with for loops and `purrr:map()`.
+1. Practice converting lists to data frames.
+1. Practice working with dates using `lubridate`.
+1. Discover the issues with found data.
+1. Practice wrangling factors with `forcats`.
+1. Practice locating and acting on patterns in strings using regular expressions with `stringr`.
+1. Practice tidying and analyzing text data with `tidytext`.
+
+### Problem 1: Loop De Loop
+
+I bet several of us have watched more movies over the past year than we usually would so let's practice reducing duplication with a movies example. For this problem we are going to be pulling data from the [OMDB API](http://www.omdbapi.com/).  Go
+[here](http://www.omdbapi.com/apikey.aspx) to set-up your free API key.
+
+a.  Insert your API key.
+
+```{r}
+# Insert key
+omdb_key <- "4cc164a0"
+```
+
+b. Below I am using the `httr` package to pull and parse the data for *Knives Out*.  Modify the code to pull and parse the data for *Office Space*. Notice: I am also using `glue` to add my key to the url.
+
+```{r}
+office_space_pull <- GET(glue("http://www.omdbapi.com/?i=tt3896198&apikey={omdb_key}"),
+                   query = list(t = "Office Space",
+                                y = 1999,
+                                plot = "short",
+                                r = "json"))
+
+office_space <- content(office_space_pull, as = "parsed", type = "application/json")
+glimpse(office_space)
+```
+
+c. Write a function, called `grab_movie()`, to pull and parse the data on a given movie.  Include `title`, `year`, and `omdb_key` as arguments.  Test your function on one movie.  (Don't worry about putting in error or warning messages for faulty arguments.)
+
+```{r}
+grab_movie <- function(title, year, omdb_key) {
+  movie_pull <- GET(glue("http://www.omdbapi.com/?i=tt3896198&apikey={omdb_key}"),
+                query = list(t = title,
+                             y = year,
+                             plot = "short",
+                             r = "json"))
+  movie <- content(movie_pull, as = "parsed", type = "application/json")
+  movie
+}
+
+glimpse(grab_movie(title = "Ocean's Eight", year = 2018, omdb_key = omdb_key))
+```
+
+d. Pick three movies that came out in 2020 that you want to see.  Use the `map()` function or a for loop to pull and parse the data on those three movies, storing the output in a list.
+
+```{r}
+# 2020 Movies you want to see
+titles_2020 <- c("Promising Young Woman", "I Care a Lot", "Kiss the Ground")
+
+movies_2020 <- 
+  map(.x = titles_2020,
+      .f = function(.x) grab_movie(title = .x,
+                                               year = 2020,
+                                               omdb_key = omdb_key))
+```
+
+e. Now pick 10 movies you want to see (or rewatch) but this time they can't all have come out in 2020.  Use the `map2()` function or for loops to pull and parse the data on these movies, storing the output in a list called `movies`.
+
+We need `map2()` because now we want to iterate over 2 arguments: `title` and `year`.  Here is an example of `map2()` in action.  
+
+```{r}
+x <- 1:3
+y <- 4:6
+map2(x, y, sum)
+```
+
+```{r}
+# Fill in
+title <- c("Promising Young Woman", "I Care a Lot", "Red Sparrow", 
+           "The Fundamentals of Caring", "Thor: Ragnarok", "Little Women", 
+           "The Spy Who Dumped Me", "Ocean's Eight", "Ghostbusters", "Captain Marvel")
+# Fill in corresponding years for each movie
+year <- c(2020, 2020, 2018, 2016, 2017, 2019, 2018, 2018, 2016, 2019)
+
+movies <- map2(.x = title,
+               .y = year,
+               .f = function(.x, .y) grab_movie(title = .x,
+                                               year = .y,
+                                               omdb_key = omdb_key))
+```
+
+f.  Now let's convert some of the data stored in `movies` into a nice `data.frame`.  Using `map_dfr()` or for loops, create a data frame that contains a row for each movie and a column for the following variables: `"Title", "Year", "Rated", "Runtime", "Genre", "imdbRating", "imdbVotes"`.
+```{r}
+movie_df <- map_dfr(movies,`[`, c("Title", "Year", "Rated", "Runtime", "Genre", "imdbRating", 
+                                  "imdbVotes"))
+movie_df
+```
+
+g. Now use your nice clean data frame to create an interesting graph about the movies you want to see (or rewatch).  Draw some conclusions about your movie interests from the graph. Before you can create the graph, you will likely still need to do a little data wrangling (e.g., maybe a `parse_number()` in a `mutate()`).
+```{r}
+movie_df <- movie_df %>%
+  mutate(parse_number(imdbRating), parse_number(imdbVotes)) %>%
+  separate_rows(Genre, convert = TRUE) %>%
+  filter(Genre != "Fi")
+
+ggplot(movie_df, aes(x = Genre, fill = Title)) +
+  geom_bar() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+```
+It looks like I am mostly looking forward to watch movies that are considered action or comedy movies. 6/10 of the movies on my watch list are comedy or action movies, and 4/10 of the selected movies are considered both. That leads me to believe that action and comedy movies are my favorite genre. 
+
+### Problem 2: Are Volcanic Eruptions Increasing?
+
+The [Smithsonian's Global Volcanism Program](https://volcano.si.edu/) (GVP) keeps up-to-date information on the volcanoes of the world and their eruptions.  GVP also maintains two databases of all documented volcanoes and eruptions from the last 10,000 years.  In this problem and the next, we will explore the GVP dataset of all documented eruptions.  Note: I downloaded the data in Spring of 2016.
+
+
+```{r}
+Eruptions <- read_csv("/home/courses/math241s21/Data/GVP_Eruption_Results.csv")
+```
+
+a. Subset the data frame to only include confirmed eruptions (`EruptionCategory`).  Now how many observations do we have? What does each row of the dataset represent?  (Use this subset for the rest of the problem.)
+```{r}
+confirmed_eruptions <- Eruptions %>%
+  filter(EruptionCategory == "Confirmed Eruption")
+```
+Out of the original 11019 observations in the original dataset, only 99756 of those were confirmed eruptions. Each row represents each time there was a confirmed volcano eruption. 
+
+b. If we want to plot year versus the number of eruptions that started that year, what do we want each row to represent?  What variables would you want to include in that dataset?
+
+We want each row to represent a year. We would include the StartYear variable as well as a count variable
+
+c. Create the dataset you described above and a graph of start year versus the number of eruptions.  Discuss any trends you see in the plot.
+```{r}
+confirmed_eruptions <- confirmed_eruptions %>%
+  select(StartYear) %>% 
+  group_by(StartYear) %>% 
+  summarise(count = n())
+
+ggplot(confirmed_eruptions, aes(x = StartYear, y = count)) +
+  geom_point(alpha = 0.3, color = 'seagreen')
+```
+
+There seems to be many years before year 1250 approximately where there we no volcanic eruptions, but if a year had an eruption, there were many. Starting after year 1250, there seems to be more volcanic eruptions, at least there are more documented for each year. This plot makes it seem that only in the last 750 years or so have volcanic eruptions be so common.
+
+d. Let's focus on eruptions that started in 1900 onward.  From 1900 onward, produce a graph of start year versus the number of eruptions and include the line of best fit (i.e., linear regression line).  Address the question: "Are volcanic eruptions increasing?"
+
+```{r}
+confirmed_eruptions <- confirmed_eruptions %>%
+  filter(StartYear >= 1900)
+
+ggplot(confirmed_eruptions, aes(x = StartYear, y = count)) +
+  geom_bar(stat= "identity", fill = 'seagreen')+ 
+  geom_smooth(aes(x = StartYear, y = count), 
+                method = "lm", se= FALSE, color = "red")
+```
+ 
+As the line of best fit has a positive slope, it implies that there has been an increase in volcanic eruptions since the year 1900. So yes, volcanic eruptions are increasing.
+ 
+e. Let's explore how sampling bias might have impacted these data.  We want to answer the following questions:
+
+* Why are there dips in number of eruptions for two time periods? 
+* How might size of eruption relate to probability of detection over time?
+
+We can investigate the second bullet by re-wrangling the data and including the average size of the explosions in a given year.  We will measure size using the Volcanic Explosivity Index (VEI), a measure of how explosive an eruption is.  Create a dataset with starting year, frequency of eruptions, and average VEI per year for 1900 onward.  Then produce a graph of starting year versus count with average VEI mapped to color. 
+
+```{r}
+new_confirmed_eruptions <- Eruptions %>%
+  filter(EruptionCategory == "Confirmed Eruption", StartYear >= 1900) %>%
+  group_by(StartYear) %>% 
+  summarise(count = n(),
+            avgVEI = mean(VEI, na.rm = TRUE))
+
+mid <- mean(new_confirmed_eruptions$avgVEI, na.rm = TRUE)
+mid
+
+ggplot(new_confirmed_eruptions, aes(x = StartYear, y = count, fill = avgVEI)) +
+  geom_bar(stat = "identity") +
+  scale_fill_gradient2(midpoint = mid, low = "blue", mid = "yellow",
+                     high = "red", space ="Lab") 
+```
+
+f.  Address the following questions and how they might impact the quality of the data (as a reflection of all eruptions from 1900 onward):
+
+* Why are there dips in number of eruptions for two time periods? 
+* How might size of eruption relate to probability of detection over time?
+
+Those two relatively dramatic dips occur when the volcanic eruptions are more explosive than usual (red/orange bars). There seems to be an inverse correlation between average explosivity and total count of eruptions. So, in years where volcanic eruptions are more explosive, we are likely to see less total number of eruptions. However, acknowledging how much technology has advanced in the past 100ish years, it is likely that in the early 1900s only the more explosive volcanic eruptions were recorded and other, less explosive eruptions did not catch enough attention and were not documented. This created bias in the data based on scientist's technological ability to measure the true total number of eruptions per year. This is most likely why the second half of the dataset has more counts of volcanic eruptions, but a lower VEI average. 
+
+g. Subset the data to only larger confirmed eruptions (VEI >=2) from 1900 onward and recreate the graph of starting year versus count with average VEI mapped to color.  Based on this graph do eruptions appear to be increasing over time?
+```{r}
+newer_confirmed_eruptions <- Eruptions %>%
+  filter(EruptionCategory == "Confirmed Eruption", StartYear >= 1900, VEI >= 2) %>%
+  group_by(StartYear) %>% 
+  summarise(count = n(),
+            avgVEI = mean(VEI, na.rm = TRUE))
+
+mid <- mean(newer_confirmed_eruptions$avgVEI, na.rm = TRUE)
+mid
+
+ggplot(newer_confirmed_eruptions, aes(x = StartYear, y = count, fill = avgVEI)) +
+  geom_bar(stat = "identity") +
+  geom_smooth(aes(x = StartYear, y = count), 
+                method = "lm", se= FALSE, color = "red") +
+  scale_fill_gradient2(midpoint = mid, low = "blue", mid = "yellow",
+                     high = "red", space ="Lab") 
+```
+
+No. Looking at the line of best fit I added to the plot, there seems to be a slight decrease in eruptions (very explosive eruptions) over time. However, it does seem that the 2016 data is incomplete, which should be noted and is likely playing a role in that slight decline. Noting that, and controlling for better technology picking up ALL eruptions, this plot shows that the occurrence of volcanic eruptions seem to be the same over time.
+
+### Problem 3: Dates and Eruptions
+
+From what we learned in Problem 2, let's only consider eruptions that **ended** in 1968, the year GVP started documenting eruptions, or later than 1968.
+
+For this problem, I want you to explore the duration of eruptions.
+
+a. Subset the Eruptions dataset to only confirmed eruptions that ended in 1968 or later. Use that dataset for the rest of the problem.
+```{r}
+end_eruptions <- Eruptions %>%
+  filter(EndYear >= 1968)
+```
+
+b. Add a `StartDate` column and an `EndDate` column where each incorporates the year, month, and day.  Also add a column that contains the date interval. (Use the `lubridate` cheatsheet to figure out how to add the date interval.)
+```{r}
+end_eruptions$StartDate <- as.Date(with(end_eruptions, 
+                                        paste(StartYear, StartMonth, StartDay, sep = "-")), 
+                                   "%Y-%m-%d")
+end_eruptions$EndDate <- as.Date(with(end_eruptions, 
+                                      paste(EndYear, EndMonth, EndDay, sep = "-")), 
+                                 "%Y-%m-%d")
+end_eruptions$DateInterval <- interval(end_eruptions$StartDate, end_eruptions$EndDate)
+```
+
+c. Create a dataset of those that failed to parse the `StartDate` (and therefore have an NA entry).  Why did those dates fail to parse?
+
+```{r}
+failed_parse <- end_eruptions %>%
+  filter(is.na(StartDate))
+glimpse(failed_parse)
+```
+
+Those dates failed to parse because their `StartDay` values were 0, and 0 does not represent an actual day of a month.
+
+d. Using a `lubridate` function, add a column for the length of the eruption intervals in days.
+
+```{r}
+end_eruptions$IntervalLength <- time_length(end_eruptions$DateInterval, "day")
+```
+
+e. Construct a graph that attempts to answer the question: Is there are relationship between VEI (the size) and the length of an eruption?  Draw conclusions from your graph.
+
+```{r}
+mid <- mean(end_eruptions$VEI, na.rm = TRUE)
+mid #mean
+mid <- median(end_eruptions$VEI, na.rm = TRUE)
+mid #median
+midV <- median(end_eruptions$IntervalLength, na.rm = TRUE)
+midV
+
+ggplot(end_eruptions, aes(x = VEI, y = IntervalLength, color = VEI)) +
+  geom_jitter(alpha = 0.8) +
+  geom_vline(xintercept = mid, color = "black") +
+  geom_hline(yintercept = midV) +
+  scale_color_gradient2(midpoint = mid, low = "blue", mid = "yellow",
+                     high = "red", space ="Lab") 
+```
+
+There is not a clear connection of VEI to the length of the eruptions since the median eruption length is 29 days. However, it looks like that if a volcanic eruption is super long, then it's VEI is a 2 or 3. The mean VEI is 1.5 and the median VEI is 2. This means that the super long volcanic eruptions mostly occur when the volcanic eruption's explosivity is slightly above the average since the plot shows the longest eruptions having a VEI of 3. 
+
+f.  Create a data frame of the 10 volcanoes with the longest eruptions and display the `VolcanoName`, `total_time`, and `Interval`.  This table presents what data quality issue? Recall that I downloaded these data in the spring of 2016. (Feel free to use the internet to verify the issue.)
+```{r}
+end_eruptions_top <- end_eruptions %>%
+  arrange(desc(IntervalLength)) %>%
+  slice(1:10) %>%
+  rename(Interval = DateInterval,
+         total_time = IntervalLength) %>%
+  select(VolcanoName, total_time, Interval)
+end_eruptions_top
+```
+
+The data was collected during 2016, so we are missing data of volcanoes that stopped erupting after the download data, or maybe volcanoes were given premature eruption end dates? I am not sure exactly which, or if it is both.
+
+### Problem 4: Food Consumption Comparisons
+
+For this problem, let's compare the food consumption patterns of other countries to the USA.  The data come from the "R for Data Science's" (R4DS) Tidy Tuesday challenge.  You can read more about the data [here](https://github.com/rfordatascience/tidytuesday/blob/master/data/2020/2020-02-18/readme.md).  
+
+**Throughout this problem use `forcats` to wrangle your factors to create easier to read, more compelling graphs.**
+
+```{r}
+food_consumption <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-02-18/food_consumption.csv')
+```
+
+a. Create a graph that compares the food consumption in the USA to two other countries.  Draw some conclusions from the graph.
+```{r}
+food_consumption %>%
+  filter(country == "USA" | country == "Sweden" | country == "Japan") %>%
+  ggplot(aes(x = food_category, y = consumption, fill = country)) +
+  geom_bar(stat = "identity", position = position_dodge()) +
+  geom_text(aes(label = consumption), vjust = 1.6, color = "black",
+            position = position_dodge(0.9), size = 2) +
+  theme(axis.text.x = element_text(angle = -90, vjust = 0.5, hjust = 0))
+```
+
+Looking at the food consumption of Japan, US, and Sweden, there is cool to see that the food each country is more known for eating is reflected accurately in this plot. Sweden: cheese; Japan: rice, soybeans, and fish; USA: beef and poultry. It seems that the US and Sweden have similar consumption habits, while Japan seems to be quite different.
+
+b. Create a new column in the dataset that categories the `food_categories` into the following broader categories: meat, non-meat animal products, and plant products.  Compare the differences in consumption for these broader categories in the USA and two other countries.  Draw some conclusions from the graph.
+```{r}
+food_categories <- c("meat", "non-meat animal products", "meat", "meat", 
+                     "non-meat animal products", "plant products", "meat", "meat", 
+                     "plant products", "plant products", "plant products")
+
+food_category <- c("Beef", "Eggs", "Fish", "Lamb & Goat", "Milk - inc. cheese", 
+                   "Nuts inc. Peanut Butter", "Pork", "Poultry", "Rice", "Soybeans", 
+                   "Wheat and Wheat Products")
+df <- data.frame(food_category, food_categories)
+food_consumption <- food_consumption %>% 
+  left_join(df)
+
+food_consumption %>%
+  filter(country == "USA" | country == "India" | country == "Japan") %>%
+  ggplot(aes(x = food_categories, y = consumption, fill = country)) +
+  geom_bar(stat = "identity", position = position_dodge()) +
+  theme(axis.text.x = element_text(angle = -90, vjust = 0.5, hjust = 0))
+```
+
+Looking at India, Japan, and the USA, the US consumes the most out of all of these specific food categories. It would be interesting to include fruits and vegetables to this dataset, since I am not sure how the US is consuming the most food despite having a smaller population size than India. This could mean that the US eats less of fruits and vegtables as a whole, which is why their consumption of meat, non-meat animal products, and plant products is so high.
+
+c. Ask a new question of these data.  Generate a graph to answer that question and draw some conclusions from the graph.  
+
+**How does meat consumption relate to a country's total CO2 emissions from food consumption?**
+```{r}
+food_consumption <- food_consumption %>%
+  group_by(country)
+food_consumption$total_CO2 <- ave(food_consumption$co2_emmission, 
+                                  food_consumption$country, FUN = sum)
+
+food_consumption_meat <- food_consumption %>%
+  filter(food_categories == "meat")
+food_consumption_meat$meat <- ave(food_consumption_meat$consumption, 
+                                  food_consumption_meat$country, FUN = sum)
+
+food_consumption_plant <- food_consumption %>%
+  filter(food_categories == "plant products")
+food_consumption_plant$plant_products <- ave(food_consumption_plant$consumption, 
+                                             food_consumption_plant$country, FUN = sum)
+
+food_consumption_aniprod <- food_consumption %>%
+  filter(food_categories == "non-meat animal products")
+food_consumption_aniprod$animal_products <- ave(food_consumption_aniprod$consumption, 
+                                                food_consumption_aniprod$country, FUN = sum)
+
+food_consumption_plant <- food_consumption_plant %>%
+  full_join(food_consumption_meat) %>%
+  full_join(food_consumption_aniprod)
+
+consumption_compare <- pivot_longer(food_consumption_plant, 
+                                    cols = c(meat, plant_products, animal_products), 
+                                names_to = "food_type", 
+                                values_to = "consumption_amount") %>%
+  select(country, food_type, consumption_amount, total_CO2) %>%
+  drop_na() %>%
+  distinct()
+  
+ggplot(consumption_compare, aes(x = consumption_amount, y = total_CO2, color = food_type)) +
+  geom_point() +
+  geom_smooth(aes(group = food_type), 
+                method = "lm", se = FALSE) 
+```
+
+I created this plot specifically because I think it is necessary to compare each food category to each other. This plot not only shows that countries that consume a lot of meat have much higher total CO2 emissions, but specifically that meat plays a large role in CO2 emissions. Plant products have the smallest slope (though it should be noted that the regression line is not an accurate representation), meaning that even as consumption of plant products goes up, it does not dramatically contribute to the total CO2 emissions from food consumption of a country. Animal products have the second highest slope, indicating that they contribute more to the total CO2 emissions, but not as drastically as meat does. This plot tells us that meat consumption contributes greatly to total CO2 emissions.
+
+### Problem 5: What's in a Name?  (You'd Be Surprised!)
+  
+1. Load the `babynames` dataset, which contains yearly information on the frequency of baby names by sex and is provided by the US Social Security Administration.  It includes all names with at least 5 uses per year per sex. In this problem, we are going to practice pattern matching!
+
+```{r}
+library(babynames)
+data("babynames")
+?babynames
+```
+
+a. For 2000, find the ten most popular female baby names that start with the letter Z.
+
+```{r}
+babynamesA <- babynames %>%
+  filter(year == 2000) %>%
+  filter(str_detect(name, "\\b(Z)[:alpha:]*")) %>%
+  arrange(desc(n)) %>%
+  top_n(10, n)
+babynamesA
+```
+
+b. For 2000, find the ten most popular female baby names that contain the letter z.  
+```{r}
+babynamesB <- babynames %>%
+  filter(year == 2000, sex == "F") %>%
+  filter(str_detect(name, "[Z|z]")) %>%
+  arrange(desc(n)) %>%
+  top_n(10, n)
+babynamesB
+```
+
+c. For 2000, find the ten most popular female baby names that end in the letter z. 
+```{r}
+babynamesC <- babynames %>%
+  filter(year == 2000, sex == "F") %>%
+  filter(str_detect(name, ".(?=[z]$)")) %>%
+  arrange(desc(n)) %>%
+  top_n(10, n)
+babynamesC
+```
+
+d. Between your three tables in 1.a - 1.c, do any of the names show up on more than one list?  If so, which ones? (Yes, I know you could do this visually but use some joins!)
+```{r}
+babynamesD <- rbind(babynamesA, babynamesB, babynamesC)
+dup_idx <- duplicated(babynamesD)
+dup_rows <- babynamesD[dup_idx, ]
+dup_rows
+```
+
+Zoe is in both the ten most popular female baby names that start with the letter Z and the ten most popular female baby names that contain the letter z.
+
+e.  Verify that none of the baby names contain a numeric (0-9) in them.
+```{r}
+babynames %>%
+  filter(str_detect(name, "[0-9]"))
+```
+
+f. While none of the names contain 0-9, that doesn't mean they don't contain "one", "two", ..., or "nine".  Create a table that provides the number of times a baby's name contained the word "zero", the word "one", ... the word "nine". 
+
+Notes: 
+
+* I recommend first converting all the names to lower case.
+* If none of the baby's names contain the written number, there you can leave the number out of the table.
+* Use `str_extract()`, not `str_extract_all()`. (We will ignore names where more than one of the words exists.)
+
+*Hint*: You will have two steps that require pattern matching:
+
+1. Subset your table to only include the rows with the desired words.
+2. Add a column that contains the desired word.  
+
+```{r}
+babynames %>%
+  mutate(name = str_to_lower(name)) %>%
+  filter(str_detect(string = name, 
+                    pattern = "(zero|one|two|three|four|five|six|seven|eight|nine)")) %>%
+  mutate(number = 
+           str_extract(name, 
+                       pattern = "(zero|one|two|three|four|five|six|seven|eight|nine)")) %>%
+  count(number)
+```
+
+g. Which written number or numbers don't show up in any of the baby names?
+
+one, two, three, eight, and nine show up, but four, five, six, and seven do not.
+
+h. Create a table that contains the names and their frequencies for the two least common written numbers.
+```{r}
+babynames %>%
+  mutate(name = str_to_lower(name)) %>%
+  filter(str_detect(string = name, pattern = "(zero|four)")) %>%
+  group_by(name) %>%
+  count(name)
+```
+
+i. Redo f. but this time produce a table that counts the number of babies named "zero", "one", "two", ... "nine" (instead of just containing the number).  How does this table compare to the table in f.?
+```{r}
+babynames %>%
+  mutate(name = str_to_lower(name)) %>%
+  filter(str_detect(
+    string = name,
+    pattern = "\\b(zero|one|two|three|four|five|six|seven|eight|nine)")) %>%
+  mutate(
+    number = str_extract
+    (name, pattern = "\\b(zero|one|two|three|four|five|six|seven|eight|nine)")) %>%
+  count(number)
+```
+
+The count drastically decreases for almost all (Six only goes from 106 to 105 and Zero only goes from 4 to 2), but "One" still dominates as the most names. The only numbers with full names are Zero, One, Two, Six, Seven, and Nine.
+
+### Problem 6: Tidying the "Call of the Wild"
+
+Did you read "Call of the Wild" by Jack London when you were growing up?  If not, [read the first paragraph of its wiki page](https://en.wikipedia.org/wiki/The_Call_of_the_Wild) for a quick summary and then let's do some text analysis on this classic!  The following code will pull the book into R using the `gutenbergr` package.  
+
+```{r}
+library(gutenbergr)
+wild <- gutenberg_download(215, mirror = "http://www.gutenberg.org/dirs/")
+```
+
+a.  Create a tidy text dataset where you tokenize by words.
+```{r}
+tokenize_wild <- wild %>%
+  unnest_tokens(word, text)
+```
+
+b. Find the frequency of the 20 most common words.  First, remove stop words.
+```{r}
+frequent_wild <- tokenize_wild %>%
+  anti_join(stop_words, by = "word") %>%
+  count(word) %>%
+  mutate(prop = n/sum(n)) %>%
+  arrange(desc(n)) %>%
+  slice(1:20)
+frequent_wild
+```
+
+c. Create a bar graph and a word cloud of the frequencies of the 20 most common words.
+```{r}
+ggplot(frequent_wild, aes(x = word, y = prop)) +
+  geom_col() + 
+  coord_flip()
+
+library(wordcloud)
+library(viridis)
+pal <- magma(n = 30, direction = -1)
+frequent_wild %>%
+  with(wordcloud(word, n, colors = pal,
+          min.freq = 7, random.order = FALSE,
+          scale = c(4, 1)))
+```
+
+d. Explore the sentiment of the text using two of the sentiment lexicons in `tidytext`. What does your analysis say about the sentiment of the text?
+
+Notes:
+
+* Make sure to NOT remove stop words this time.  
+* afinn is a numeric score and should be handled differently than the categorical scores.
+
+```{r}
+bing <- get_sentiments("bing")
+nrc <- get_sentiments("nrc")
+
+tokenize_wild %>%
+  inner_join(bing, by = "word") %>%
+  group_by(sentiment) %>%
+  count(word) %>%
+  summarize(n = sum(n)) %>%
+  mutate(prop = n/sum(n)) %>%
+  ggplot(aes(x = sentiment, y = prop, fill  = sentiment)) +
+  geom_col()
+  
+tokenize_wild %>%
+  inner_join(nrc, by = "word") %>%
+  group_by(sentiment) %>%
+  count(word) %>%
+  summarize(n = sum(n)) %>%
+  mutate(prop = n/sum(n)) %>%
+  ggplot(aes(x = sentiment, y = n, fill  = sentiment)) +
+  geom_col() +
+  theme(axis.text.x = element_text(angle = -90, vjust = 0.5, hjust = 0))
+```
+
+The sentiment of the text is definitely more negative than positive. Notably, the third most common sentiment was fear according the nrc lexicon. The nrc lexicon gives words multiple sentiments, for example, a word is negative, but also represents fear and disgust. Fear would not go along with a positive sentiment, meaning that most of the words that are described as negative also contain the sentiment of fear. This means that the book articulates many cases of fear, according to the lexicon sentiment scores.
+
+e. If you didn't do so in 6.d, compute the average sentiment score of the text using `afinn`.  Which positive words had the biggest impact? Which negative words had the biggest impact?
+```{r}
+afinn <- get_sentiments("afinn")
+
+tokenize_wild_afinn <- tokenize_wild %>%
+  inner_join(afinn, by = "word") %>%
+  group_by(value) %>%
+  count(word) %>%
+  mutate(sentiment_impact = (n*value))
+
+#the average sentiment score of the text
+avg_sentiment <- mean(tokenize_wild_afinn$sentiment_impact)
+avg_sentiment
+
+#positive words had the biggest impact (top 10 of sentiment_impact)
+tokenize_wild_afinn %>%
+  arrange(desc(sentiment_impact)) 
+
+#negative words had the biggest impact (top 10 of sentiment_impact)
+tokenize_wild_afinn %>%
+  arrange(sentiment_impact)
+```
+
+f. You should have found that "no" was an important negative word in the sentiment score.  To know if that really makes sense, let's turn to the raw lines of text for context.  Pull out all of the lines that have the word "no" in them.  Make sure to not pull out extraneous lines (e.g., a line with the word "now").  
+```{r}
+str_subset(wild$text, pattern = "\\b(N|n)o\\b")
+```
+
+g. Draw some conclusions about how "no" is used in the text.
+No is not used in the text often as a yes/no dichotomy which tends to be related to the positive/negative dichnotomy and I imagine is how the sentiment score defines every no in the text. This means that no is probably not fully representing what each "no"'s true sentiment is. Looking at the text, no is often used to explain where there was nothing left, "no more trouble"/"no longer was"/"no longer pull", which I see as having a negative sentiment. 
+
+h. Let's look at the bigrams (2 consecutive words).  Tokenize the text by bigrams.  
+```{r}
+bigrams <- wild %>%
+  unnest_tokens(bigram, text, token = "ngrams", n = 2)
+```
+
+i.  Produce a sorted table that counts the frequency of each bigram and notice that stop words are still an issue.
+```{r}
+bigrams %>%
+  count(bigram) %>%
+  mutate(prop = n/sum(n)) %>%
+  arrange(desc(n))
+```
+
+j. Put each of the bigram words in its own column (hint: Use a `tidyr` function) and then remove any row where either the first word or the second word is a stop word.
+```{r}
+sep_bigram <- bigrams %>%
+  separate(col = bigram, into = c("first_word", "second_word"), sep = "\\s")
+sep_bigram <- sep_bigram %>%
+  anti_join(stop_words, by = c("first_word" = "word"))
+```
+
+k. Produce a sorted table that counts the frequency of each bigram.  (Do you remember "the man in the red sweater?")
+```{r}
+sep_bigram$bigram = paste(sep_bigram$first_word, sep_bigram$second_word)
+
+sep_bigram %>%
+  count(bigram) %>%
+  mutate(prop = n/sum(n)) %>%
+  arrange(desc(n))
+```
+
+### Problem 7: Your Sentiment Analysis
+
+Now it is your turn.  Pick 4 of the texts from `gutenbergr` or 4 albums from `genius` and do the following:
+
+* Create wordclouds for word frequency for each text/album.
+* Create a graphic that compares the sentiments of the texts/albums in some way. 
+* Create a graphic that presents the tf_idf's for the important words in each text.  
+* Write a paragraph or two of key takeaways.
+
+```{r}
+library(genius)
+MyloXyloto <- genius_album(artist = "Coldplay", album = "Mylo Xyloto") %>%
+  mutate(album = "MyloXyloto")
+Parachutes <- genius_album(artist = "Coldplay", album = "Parachutes") %>%
+  mutate(album = "Parachutes")
+Viva_la_vida <- genius_album(artist = "Coldplay", album = 
+                               "Viva la Vida or Death and All His Friends") %>%
+  mutate(album = "Viva_la_vida")
+A_Head_Full_of_Dreams <- genius_album(artist = "Coldplay", 
+                                      album = "A Head Full of Dreams") %>%
+  mutate(album = "A_Head_Full_of_Dreams")
+```
+```{r}
+cold <- bind_rows(MyloXyloto, Parachutes, Viva_la_vida, 
+                      A_Head_Full_of_Dreams) %>%
+  unnest_tokens(output = word, input = lyric, token = "words") %>%
+  anti_join(stop_words, by = "word") %>%
+  filter(!(word %in% c("ooh", "la", "ah", "yeah", "para", "ooo", "oooo", "wa",
+                       "aah", "na", "oo", "oooooooh", "woah", "woo", "hoo")))
+
+coldplay <- bind_rows(MyloXyloto, Parachutes, Viva_la_vida, 
+                      A_Head_Full_of_Dreams) %>%
+  unnest_tokens(output = word, input = lyric, token = "words") %>%
+  anti_join(stop_words, by = "word") %>%
+  filter(!(word %in% c("ooh", "la", "ah", "yeah", "para", "ooo", "oooo", "wa",
+                       "aah", "na", "oo", "oooooooh", "woah", "woo", "hoo"))) %>%
+  count(album, word) %>%
+  group_by(album) %>%
+  mutate(prop = n/sum(n)) %>%
+  arrange(desc(n))
+
+coldplay_tidy <- bind_rows(MyloXyloto, Parachutes, Viva_la_vida, 
+                           A_Head_Full_of_Dreams) %>%
+  unnest_tokens(output = word, input = lyric, token = "words") %>%
+  anti_join(stop_words, by = "word") %>%
+  filter(!(word %in% c("ooh", "la", "ah", "yeah", "para", "ooo", "oooo", "wa",
+                       "aah", "na", "oo", "oooooooh", "woah", "woo", "hoo"))) %>%
+  count(album, word, sort = TRUE) %>%
+  bind_tf_idf(word, album, n)
+
+coldplay_wider <- coldplay %>%
+  select(album, word, prop) %>%
+  pivot_wider(names_from = album, values_from = prop)
+
+```
+```{r}
+#Mylo Xyloto
+coldplay %>%
+  filter(album == "MyloXyloto") %>%
+  with(wordcloud(word, n, scale = c(4, 1),
+                 colors = pal, min.freq = 3, 
+                 random.order = FALSE))
+```
+```{r}
+#Parachutes
+coldplay %>%
+  filter(album == "Parachutes") %>%
+  with(wordcloud(word, n, scale = c(4, 1),
+                 colors = pal, min.freq = 3, 
+                 random.order = FALSE))
+```
+```{r}
+#Viva la vida
+coldplay %>%
+  filter(album == "Viva_la_vida") %>%
+  with(wordcloud(word, n, scale = c(4, 1),
+                 colors = pal, min.freq = 3, 
+                 random.order = FALSE))
+```
+```{r}
+#A Rush of Blood to the Head
+coldplay %>%
+  filter(album == "A_Head_Full_of_Dreams") %>%
+  with(wordcloud(word, n, scale = c(4, 1),
+                 colors = pal, min.freq = 4, 
+                 random.order = FALSE))
+```
+```{r}
+#a graphic that compares the sentiments of the texts/albums in some way
+cold %>%
+  inner_join(nrc, by = "word") %>%
+  group_by(album, sentiment) %>%
+  count(word) %>%
+  summarize(n = sum(n)) %>%
+  mutate(prop = n/sum(n)) %>%
+  ggplot(aes(x = sentiment, y = prop, fill  = album)) +
+  geom_col(position = "dodge") + 
+  coord_flip()
+```
+```{r}
+#a graphic that presents the tf_idf's for the important words in each text
+coldplay_tidy %>%
+  group_by(album) %>%
+  slice_max(tf_idf, n = 10) %>%
+  ungroup() %>%
+  mutate(word = fct_reorder(word, tf_idf)) %>%
+  ggplot(aes(x = word, y = tf_idf, fill = album)) + 
+  geom_col(show.legend = FALSE) + coord_flip() +
+  facet_wrap(~album, ncol = 2, scales = "free")
+```
+
+For this problem, I looked at and compared four Coldplay albums. The sentiment chart gives the most interesting comparison of the albums. All albums had minimal sentiments of `surprise` and `disgust`, shows that that the artist does not write much to those emotions. The plot also shows that one album, `Mylo Xyloto`, is quite different from the the other three. Specifically, it is the only album where it has a higher proportion of words that articulate a negative sentiment than positive. The word cloud also points this out. Though the albums most prominant words are `paradise` and `heart`, most of the surrounding words do not have a similar positive sentiment ("tear", "hurt", "dark", "cold", "lost", "flames", "chaos"). The 'A Head Full of Dreams' album, on the other hand, his the highest positive sentiment, but this album also stands out in the anticipation sentiment, it is pointedly higher than the other albums. This checks out when we look at the word clouds, as the most prominent word in the `A Head Full of Dreams` word cloud is "gonna" with other action words around it like "wanna", "race", "dream", and "beating." The tf_idf important words graphic shows the positivity of the album ("amazing", "fun", and "treasure" being listed). 

@@ -1,0 +1,527 @@
+---
+title: "Lab 3"
+author: "Alyssa Andrichik"
+date: "Math 241, Week 4"
+output:
+  pdf_document
+urlcolor: blue
+---
+
+```{r setup, include=FALSE}
+# Do not modify this chunk.
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+
+
+```
+
+```{r}
+# Put all necessary libraries here
+library(tidyverse)
+library(dplyr)
+```
+
+
+
+## Due: Thursday, February 25th at ~~8:30am~~ 6:00pm
+
+## Goals of this lab
+
+1. Practice using GitHub.
+1. Practice wrangling data.
+
+
+## Data Notes:
+
+* For Problem 2, we will continue to dig into the SE Portland crash data but will use two datasets:
+    + `CRASH`: crash level data
+    + `PARTIC`: participant level data
+
+
+```{r}
+
+# Crash level dataset
+crash <- read_csv("/home/courses/math241s21/Data/pdx_crash_2018_CRASH.csv")
+
+# Participant level dataset
+partic <- read_csv("/home/courses/math241s21/Data/pdx_crash_2018_PARTIC.csv")
+```
+
+* For Problem 3, we will look at chronic illness data from the [CDC](https://www.cdc.gov/cdi/index.html) along with the regional mapping for each state.
+
+
+```{r}
+# CDC data
+CDC <- read_csv("/home/courses/math241s21/Data/CDC2.csv")
+
+# Regional data
+USregions <- read_csv("/home/courses/math241s21/Data/USregions.csv")
+```
+
+* For Problem 4, we will use polling data from [FiveThirtyEight.com](https://projects.fivethirtyeight.com/congress-generic-ballot-polls/).
+
+
+```{r}
+# Note I only want us to focus on a subset of the variables
+polls <- read_csv("/home/courses/math241s21/Data/generic_topline.csv") %>%
+  select(subgroup, modeldate, dem_estimate, rep_estimate)
+```
+
+* For Problem 6, we will use several datasets that came from `pdxTrees` but good messed up a bit:
+
+```{r}
+# Data on trees in a few parks in Portland
+treez <- read_csv("/home/courses/math241s21/Data/treez.csv")
+treez_loc <- read_csv("/home/courses/math241s21/Data/treez_loc.csv")
+treez_park <- read_csv("/home/courses/math241s21/Data/treez_park.csv")
+```
+
+
+
+## Problems
+
+
+### Problem 1: Git Control
+
+In this problem, we will practice interacting with GitHub on the site directly and from the RStudio Server.  Do this practice on **your labwork_username repo**, not your group's Project 1 repo, so that the graders can check your progress with Git.
+
+
+a. Let's practice creating and closing **Issues**.  In a nutshell, **Issues** let us keep track of our work. Within your repo on GitHub.com, create an Issue entitled "Complete Lab 3".  Once Lab 3 is done, close the **Issue**.  (If you want to learn more about the functionalities of Issues, check out this [page](https://guides.github.com/features/issues/).)
+
+
+b. Edit the ReadMe of your repo to include your name and a quick summary of the purpose of the repo.  You can edit from within GitHub directly or on the server.  If you edit on the server, make sure to push your changes to GitHub.
+
+c. Upload both your Lab 3 .Rmd and .pdf to your repo on GitHub.
+
+
+### Problem 2: `dplyr` madness
+
+Each part of this problem will require you to wrangle the data and then do one or both of the following:
+
++ Display the wrangled data frame.  To ensure it displays the whole data frame, you can pipe `as.data.frame()` at the end of the wrangling.
++ Answer a question(s).
+
+**Some parts will require you to do a data join but won't tell you that.**
+
+
+
+a. Produce a data frame that provides the frequency of the different collision types, ordered from most to least common.  What type is most common? What type is least common?
+```{r}
+collision_df <- crash %>%
+  select(COLLIS_TYP_CD)
+  
+collision_tidy <- as.data.frame(table(collision_df$COLLIS_TYP_CD), stringsAsFactors=FALSE)
+
+collision_tidy <- collision_tidy %>%
+  rename(collision_type = Var1) %>%
+  rename(frequency = Freq)
+
+collision_tidy$collision_type[collision_tidy$collision_type=="1"] <- "Angle"
+collision_tidy$collision_type[collision_tidy$collision_type=="2"] <- "Head-On"
+collision_tidy$collision_type[collision_tidy$collision_type=="3"] <- "Rear-End"
+collision_tidy$collision_type[collision_tidy$collision_type=="4"] <- "Sideswipe-meeting"
+collision_tidy$collision_type[collision_tidy$collision_type=="5"] <- "Sideswipe-overtaking"
+collision_tidy$collision_type[collision_tidy$collision_type=="6"] <- "Turning Movement"
+collision_tidy$collision_type[collision_tidy$collision_type=="7"] <- "Parking Maneuver"
+collision_tidy$collision_type[collision_tidy$collision_type=="8"] <- "Non-collision"
+collision_tidy$collision_type[collision_tidy$collision_type=="9"] <- "Fixed-Object or Other-Object"
+collision_tidy$collision_type[collision_tidy$collision_type=="0"] <- "Pedestrian"
+collision_tidy$collision_type[collision_tidy$collision_type=="-"] <- "Backing"
+collision_tidy$collision_type[collision_tidy$collision_type=="&"] <- "Miscellaneous"
+
+collision_tidy <- collision_tidy %>%
+  arrange(desc(frequency))
+collision_tidy
+```
+
+The most common collision is rear-ends and, technically, miscellaneous is the least common collision. But, of the actual collision types provided, parking maneuvers are the least common type of collisions.
+
+b.  For the three most common collision types, create a table that contains:
+    + The frequencies of each collision type and weather condition combination.
+    + The proportion of each collision type by weather condition.
+    
+Arrange the table by weather and within type, most to least common collision type.  
+```{r}
+coll_weath_df <- crash %>%
+  select(WTHR_COND_SHORT_DESC, COLLIS_TYP_CD)
+
+coll_weath_df <- coll_weath_df[coll_weath_df$COLLIS_TYP_CD %in% c(3,6,1),]
+
+coll_weath_1 <- coll_weath_df %>%
+  group_by(WTHR_COND_SHORT_DESC, COLLIS_TYP_CD) %>%
+  summarise(n = n()) %>%
+  mutate(proportion = n / sum(n)) %>%
+  group_by(WTHR_COND_SHORT_DESC) %>%
+  arrange(desc(n), .by_group = TRUE) %>%
+  rename(collision_type = COLLIS_TYP_CD) %>%
+  rename(frequency = n) %>%
+  rename(weather_type = WTHR_COND_SHORT_DESC)
+
+coll_weath_1$collision_type[coll_weath_1$collision_type=="1"] <- "Angle"
+coll_weath_1$collision_type[coll_weath_1$collision_type=="3"] <- "Rear-End"
+coll_weath_1$collision_type[coll_weath_1$collision_type=="6"] <- "Turning Movement"
+
+coll_weath_1
+```
+
+c. Create a column for whether or not a crash happened on a weekday or on the weekend and then create a data frame that explores if the distribution of collision types varies by whether or not the crash happened during the week or the weekend.
+```{r}
+collision_c <- crash %>%
+  select(COLLIS_TYP_CD, CRASH_WK_DAY_CD)
+weekday_df <- data.frame(day_of_week = c(1, 2, 3, 4, 5, 6, 7),
+                         day = c("weekend", "weekday", "weekday", "weekday", "weekday", 
+                                 "weekday", "weekend"))
+collision_c <- left_join(collision_c, weekday_df, 
+                         by = c("CRASH_WK_DAY_CD" = "day_of_week"))
+
+collision_c <- collision_c %>%
+  select(COLLIS_TYP_CD, day) %>%
+  group_by(COLLIS_TYP_CD, day) %>%
+  summarise(n = n()) %>%
+  group_by(COLLIS_TYP_CD, day) %>%
+  arrange(desc(n), .by_group = TRUE) %>%
+  rename(collision_type = COLLIS_TYP_CD) %>%
+  rename(frequency = n)
+
+collision_c$collision_type[collision_c$collision_type=="1"] <- "Angle"
+collision_c$collision_type[collision_c$collision_type=="2"] <- "Head-On"
+collision_c$collision_type[collision_c$collision_type=="3"] <- "Rear-End"
+collision_c$collision_type[collision_c$collision_type=="4"] <- "Sideswipe-meeting"
+collision_c$collision_type[collision_c$collision_type=="5"] <- "Sideswipe-overtaking"
+collision_c$collision_type[collision_c$collision_type=="6"] <- "Turning Movement"
+collision_c$collision_type[collision_c$collision_type=="7"] <- "Parking Maneuver"
+collision_c$collision_type[collision_c$collision_type=="8"] <- "Non-collision"
+collision_c$collision_type[collision_c$collision_type=="9"] <- "Fixed-Object or Other-Object"
+collision_c$collision_type[collision_c$collision_type=="0"] <- "Pedestrian"
+collision_c$collision_type[collision_c$collision_type=="-"] <- "Backing"
+collision_c$collision_type[collision_c$collision_type=="&"] <- "Miscellaneous"
+
+collision_c
+```
+
+d.  First determine what proportion of crashes involve pedestrians.  Then, for each driver license status, determine what proportion of crashes involve pedestrians.  What driver license status has the highest rate of crashes that involve pedestrians?
+```{r}
+#creatw variable y/no pedestrian
+crash_d <- crash %>%
+  select(CRASH_ID, COLLIS_TYP_SHORT_DESC)
+ped_prop_d <- crash_d %>%
+  group_by(COLLIS_TYP_SHORT_DESC) %>%
+  summarise(n = n()) %>%
+  mutate(proportion = n / sum(n), case_when) %>%
+  filter(COLLIS_TYP_SHORT_DESC == "PED")
+ped_prop_d
+```
+What proportion of crashes involve pedestrians?
+0.054881940 or 5.4881940% of all crashes involved pedestrians.
+```{r}
+partic_d <- partic %>%
+  select(CRASH_ID, DRVR_LIC_STAT_SHORT_DESC)
+
+ped_d <- left_join(crash_d, partic_d)
+
+ped_d <- ped_d %>%
+  group_by(DRVR_LIC_STAT_SHORT_DESC, COLLIS_TYP_SHORT_DESC) %>%
+  summarise(n = n()) %>%
+  mutate(proportion = n / sum(n)) %>%
+  filter(COLLIS_TYP_SHORT_DESC == "PED")
+ped_d
+```
+For each driver license status, determine what proportion of crashes involve pedestrians?
+
+OR-Y: 0.029008864 or 2.9%;
+OTH-Y: 0.019292605 or 1.9%;
+SUSP: 0.120689655 or 12.1%;
+UNK: 0.007692308 or 0.8%;
+NA: 0.008728180 or 0.9%
+
+What driver license status has the highest rate of crashes that involve pedestrians? Suspended, or revoked drivers license, has the highest rate of pedestrian involved crashes.
+
+
+e. Create a data frame that contains the age of drivers and collision type. (Don't print it.)  Complete the following:
+    + Find the average and median age of drivers.
+    + Find the average and median age of drivers by collision type.
+    + Create a graph of driver ages.
+    + Create a graph of driver ages by collision type.
+```{r}
+ages <- partic%>%
+  select(CRASH_ID, PARTIC_TYP_SHORT_DESC, AGE_VAL) %>%
+  filter(PARTIC_TYP_SHORT_DESC == "DRVR")
+
+ages$AGE_VAL[ages$AGE_VAL == "00"] <- NA
+
+crash_e <- left_join(crash_d, ages)
+
+crash_e <- crash_e %>%
+  select(COLLIS_TYP_SHORT_DESC, AGE_VAL)%>%
+  transform(AGE_VAL = as.numeric(AGE_VAL),
+            COLLIS_TYP_SHORT_DESC = as.character(COLLIS_TYP_SHORT_DESC))%>%
+  na.omit(crash_e)
+
+crash_onlyage <- crash_e %>%
+  summarise(mean = mean(AGE_VAL), median = median(AGE_VAL), n = n())
+#the average (mean) and median age of drivers
+crash_onlyage
+
+crash_avg <- crash_e %>%
+  group_by(COLLIS_TYP_SHORT_DESC) %>%
+  summarise(mean = mean(AGE_VAL), median = median(AGE_VAL))
+#the average (mean) and median age of drivers by collision type
+crash_avg
+
+ggplot(crash_e, aes(x = AGE_VAL)) +
+  geom_histogram() +
+  ggtitle("Distribution of Driver Age in All Car Crashes")
+
+ggplot(crash_e, aes(x = AGE_VAL, fill = COLLIS_TYP_SHORT_DESC)) +
+  geom_histogram() +
+  facet_wrap(~ COLLIS_TYP_SHORT_DESC) +
+  theme(legend.position = "none") +
+  ggtitle("Distribution of Driver Age in Different Collision Types")
+```
+Draw some conclusions.
+
+The average (40.90184) and median (38) ages over all is very close to the average (40.2) and median (38) of rear-end collisions. Rear-end collisions are the most common collisions, which helps explain why the total average and mean is so similar to the rear-end-specific data. Angle and turning movement collisions are the next most common collisions; their median and means are also very close to the total average and median. The distribution of ages for the other, far less common collisions break away from the total average and median and have a median younger or older. The fact that 40ish year olds contribute the most common collisions is because they are the most likely age group to be driving anyway: old enough to have enough money to by a car and experienced enough, and young enough to not have any heath issues that would result in needing to drive less over all. 
+
+
+### Problem 3: Chronically Messy Data
+
+a. Turning to the CDC data, let's get a handle of what is represented there.  For 2016 (use `YearStart`), how many distinct topics were tracked?
+```{r}
+CDC_a <- CDC %>%
+  filter(YearStart == "2016")
+length(table(CDC_a$Topic))
+```
+
+16 topics were tracked.
+
+b. Let's study influenza vaccination patterns! Create a dataset that contains the age adjusted prevalence of the "Influenza vaccination among noninstitutionalized adults aged >= 18 years" for Oregon and the US from 2010 to 2016.  
+```{r}
+CDC_b <- CDC %>%
+  filter(DataValueType == "Age-adjusted Prevalence", 
+         Question == "Influenza vaccination among noninstitutionalized adults aged >= 18 years")
+
+CDC_b <- CDC_b[CDC_b$LocationDesc %in% c("Oregon", "United States"),]
+CDC_b
+```
+
+c. Create a graph comparing the immunization rates of Oregon and the US.  Comment on the observed trends in your graph
+```{r}
+ggplot(CDC_b, mapping = aes(y = DataValue, x = YearStart, color = LocationDesc)) +
+  geom_point() +
+  geom_line()
+```
+Oregon is below the US average on immunization rates, but Oregon does generally follow the US immunization trend. For example, from 2015 to 2016 that is a distinct drop in immunization rates for both the US and Oregon. The years prior generally showed a slight increase (a couple percentage points) in immunization rates for both Oregon and the United States.
+
+d.  Let's see how immunization rates vary by region of the country. Join the regional dataset to our CDC dataset so that we have a column signifying the region of the country.  
+```{r}
+CDC_d <- left_join(CDC, USregions, by = c("LocationDesc" = "State"))
+CDC_d
+```
+e. Why are there NAs in the region column of the new dataset?
+
+The region column describes the region a state resides in within the US. The NA is there when the LocationDesc is in the US, or a territory of the US, but is not a state and cannot be categorized as a part of a region. The region is NA when it is the average US immunization rate since the US encompasses all regions.
+
+f. Create a dataset that contains the age adjusted influenza immunization rates in 2016 for each state in the country and sort it by highest immunization to lowest.  Which state has the highest immunization? 
+```{r}
+CDC_f <- CDC %>%
+  filter(YearStart == "2016", 
+         DataValueType == "Age-adjusted Prevalence", 
+         Question == "Influenza vaccination among noninstitutionalized adults aged >= 18 years") %>%
+  arrange(desc(DataValue))
+CDC_f <- left_join(CDC_f, USregions, by = c("LocationDesc" = "State"))
+CDC_f
+```
+South Dakota has the highest immunization.
+
+g. Construct a graphic of the 2016 influenza immunization rates by region of the country.  Don't include locations without a region. Comment on your graphic.
+```{r}
+ggplot(data = subset(CDC_f, !is.na(Region)), aes(y = DataValue, x = Region, color = Region)) +
+ # geom_violin() +
+ # geom_point() +
+  geom_boxplot()
+```
+
+The region with the highest mean immunization rate is the North East, then the Mid West, then the South, and the West is last. I chose to visualize this data with a boxplot cause it gives the mean as well as the range of the points in each region.
+
+### Problem 4: Tidying Data Like a Boss
+
+I was amazed by the fact that many of the FiveThirtyEight datasets are actually not in a perfectly *tidy* format.  Let's tidy up this dataset related to [polling](https://projects.fivethirtyeight.com/congress-generic-ballot-polls/).  
+
+
+
+a. Why is this data not currently in a tidy format?  (Consider the three rules of tidy data!)
+```{r}
+polls
+```
+
+The data is not tidy because the columns dem_estimate and rep_estimate are currently storing a variable (party). For complete tidy observations, there should be one column addressing party affiliation and another addressing the estimate.
+
+b. Create a tidy dataset of the `All polls` subgroup.
+```{r}
+all_polls <- polls %>%
+  filter(subgroup == "All polls") %>%
+  select(modeldate, dem_estimate, rep_estimate)
+all_polls <- pivot_longer(all_polls,
+                          cols = c(dem_estimate, rep_estimate),
+                          names_to = "affiliation", 
+                          values_to = "estimates")
+all_polls
+```
+
+c. Now let's create a new untidy version of `polls`.  Focusing just on the estimates for democrats, create a data frame where each row represents a subgroup (given in column 1) and the rest of the columns are the estimates for democrats by date.
+```{r}
+dem_polls <- polls %>%
+  select(subgroup, modeldate, dem_estimate)
+dem_polls$modeldate <- as.Date(dem_polls$modeldate, "%m/%d/%Y")
+untidy_polls <- pivot_wider(dem_polls,
+                             names_from = modeldate,
+                             values_from = dem_estimate)
+untidy_polls
+```
+
+d. Why might someone want to transform the data like we did in part c? 
+
+This form of the data makes missing values more clear. It also made comparing the different poll estimates for each day easier to see when looking at the dataset. 
+
+### Problem 5: YOUR TURN!
+
+Now it is your turn.  Pick one (or multiple) of the datasets used on this lab.  Ask a question of the data.  Do some data wrangling to produce statistics (use at least two wrangling verbs) and a graphic to answer the question.  Then comment on any conclusions you can draw about your question.
+```{r}
+# How does the polling average (mean) each month change for both democrats and republicans?
+newpolls <- polls %>%
+  filter(subgroup == "All polls")
+newpolls$modeldate <- as.Date(newpolls$modeldate, "%m/%d/%Y")
+
+eighteen_poll <- newpolls %>% #only 2018
+  filter(modeldate >= as.Date("2018-01-01"), modeldate <= as.Date("2018-12-31"))
+eighteen_poll$Month <- months(eighteen_poll$modeldate)
+eighteen_poll$Year <- format(eighteen_poll$modeldate, format = "%Y")
+dem_eighteen <- aggregate(dem_estimate ~ Month + Year, eighteen_poll, mean)
+rep_eighteen <- aggregate(rep_estimate ~ Month + Year, eighteen_poll, mean)
+eighteen_avg <- left_join(dem_eighteen, rep_eighteen)
+eighteen_avg$Month[eighteen_avg$Month == "January"] <- "1"
+eighteen_avg$Month[eighteen_avg$Month == "February"] <- "2"
+eighteen_avg$Month[eighteen_avg$Month == "March"] <- "3"
+eighteen_avg$Month[eighteen_avg$Month == "April"] <- "4"
+eighteen_avg$Month[eighteen_avg$Month == "May"] <- "5"
+eighteen_avg$Month[eighteen_avg$Month == "June"] <- "6"
+eighteen_avg$Month[eighteen_avg$Month == "July"] <- "7"
+eighteen_avg$Month[eighteen_avg$Month == "August"] <- "8"
+eighteen_avg$Month[eighteen_avg$Month == "September"] <- "9"
+eighteen_avg <- within(eighteen_avg, Date <- sprintf("%s-%02s", Year, Month))
+
+
+seventeen_poll <- newpolls %>% #only 2017
+  filter(modeldate >= as.Date("2017-01-01"), modeldate <= as.Date("2017-12-31"))
+seventeen_poll$Month <- months(seventeen_poll$modeldate)
+seventeen_poll$Year <- format(seventeen_poll$modeldate, format = "%Y")
+dem_seventeen <- aggregate(dem_estimate ~ Month + Year, seventeen_poll, mean)
+rep_seventeen <- aggregate(rep_estimate ~ Month + Year, seventeen_poll, mean)
+seventeen_avg <- left_join(dem_seventeen, rep_seventeen)
+seventeen_avg$Month[seventeen_avg$Month == "April"] <- "4"
+seventeen_avg$Month[seventeen_avg$Month == "May"] <- "5"
+seventeen_avg$Month[seventeen_avg$Month == "June"] <- "6"
+seventeen_avg$Month[seventeen_avg$Month == "July"] <- "7"
+seventeen_avg$Month[seventeen_avg$Month == "August"] <- "8"
+seventeen_avg$Month[seventeen_avg$Month == "September"] <- "9"
+seventeen_avg$Month[seventeen_avg$Month == "October"] <- "10"
+seventeen_avg$Month[seventeen_avg$Month == "November"] <- "11"
+seventeen_avg$Month[seventeen_avg$Month == "December"] <- "12"
+seventeen_avg <- within(seventeen_avg, Date <- sprintf("%s-%02s", Year, Month))
+
+
+month_avg <- full_join(seventeen_avg, eighteen_avg)
+month_avg <- month_avg %>%
+  select(Date, dem_estimate, rep_estimate) %>%
+  arrange(Date)%>%
+  rename(Democrats = dem_estimate) %>%
+  rename(Republicans = rep_estimate)
+month_avg <- pivot_longer(month_avg, cols = c(Democrats, Republicans),
+                          names_to = "PartyAvg",
+                          values_to = "Rating")
+
+ggplot(month_avg, aes(x = Date, y = Rating, color = PartyAvg)) +
+  geom_point()+ 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  scale_y_continuous(breaks = c(35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 
+                                 45, 46, 47, 48, 49, 50)) +
+  ylab("Average Monthly Rating (%)") + xlab("Date (Year-Month)") +
+  ggtitle("Average Monthly Rating of Political Party Support for US Congress")+
+  scale_color_manual(values = c("#093FFD", "#ED2A16")) + 
+  theme(legend.title = element_blank())
+```
+
+I wanted to see what the polls would average monthly so it was easier to see change by month in ratings for each political party. It is interesting to see that while the change in ratings seem don't seem super correlated (as one party's ratings gets higher, the other's gets lower) by this monthly basis. There a bit of correlation, not drastic enough to really say direct causality that the parties' support are greatly connected when you average to monthly averages. Maybe median would show something more interesting?
+
+### Problem 6: Channeling your Inner Marie Kondo
+
+In this problem, I am going to ask you to wrangle/clean up some data and then compare your "cleaned data" with a peer to see how your final versions differ.
+
+
+a. Join `treez`, `treez_park`, and `treez_loc` to create one data frame where:
+
+* Each row represents one tree (and there are no duplicates) from the following parks: Mt Tabor Park, Laurelhurst Park, Columbia Park
+* All missing values (including suspicious values) are appropriately coded as `NA`.
+* Each variable has a suitable `class`.
+* Categories of categorical variables are appropriated encoded.
+* And, any other cleaning is done.
+
+It might take a little sleuthing to figure out which variables are your keys and what makes these datasets messy.
+
+```{r}
+parks <- treez_park 
+parks <- left_join(treez, parks)
+parks <- parks[parks$Park %in% c("Mt Tabor Park", "Laurelhurst Park", "Columbia Park"), ] 
+
+location <- treez_loc %>%
+  select(IDUser, Latitude, Longitude) %>%
+  rename(UserID = IDUser)
+
+parks <- left_join(parks, location)
+
+parks <- parks %>%
+  mutate(Crown_Width_NS = na_if(Crown_Width_NS, 99999)) %>%
+  mutate(Crown_Width_EW = na_if(Crown_Width_EW, 99999)) %>%
+  mutate(Crown_Base_Height = na_if(Crown_Base_Height, "missing"))
+
+parks$Crown_Base_Height <- as.numeric(parks$Crown_Base_Height)
+parks$DBH <- as.numeric(parks$DBH)
+
+parks$Collected_By[parks$Collected_By == "STAFF"] <- "Staff"
+parks$Collected_By[parks$Collected_By == "volunteer"] <- "Volunteer"
+
+parks <- unique(parks)
+parks
+```
+
+b. Export your dataset to a csv file using `write_csv()`.
+
+```{r, eval = FALSE}
+# I recommend leaving in eval = FALSE
+write_csv(parks, file = "parks.csv")
+
+```
+
+c. Find a classmate (maybe a project group member?) and share your cleaned datasets with each other.  Save their data on RStudio and import it in the R chunk below.  Also, state who you shared data with.  (Feel free to share your data with multiple people but you only need to load one classmate's dataset.)
+
+```{r}
+# Import their dataset
+blaise_trees <- read_csv("blaise_trees.csv")
+
+```
+
+d. Compare your dataset and their dataset.  In your comparison, answer the following questions:
+
+* Do your datasets have the same number of rows?  Same number of columns?  
+We have the same number of columns, but not rows. He has 4,057 and I have 3,088. 
+* Use `setequal()` to determine if they are exactly the same.
+```{r}
+setequal(parks, blaise_trees)
+```
+* How are they different?
+I think he did not filter out for the specific parks asked for and we coded the "Collected_By" observations differently.
+
+e. A goal of this exercise with to experience both the **subjectivity** and **iterative nature** of data cleaning.  Any time we clean data, we are making choices and often we don't catch all the bugs in our data the first (or second time around).  
+
+Based on your explorations of a classmate's cleaned dataset, do you think your dataset needs further wrangling?  If not, justify.  If so, do that now.
+
+Mine does not need to be further wrangled. I went through every step mentioned for the problem, plus I have fewer observations so I know I didn't forget to do something.
